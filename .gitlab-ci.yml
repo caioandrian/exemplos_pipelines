@@ -1,0 +1,84 @@
+image: cypress/base:latest
+
+variables:
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+  CYPRESS_CACHE_FOLDER: "$CI_PROJECT_DIR/cache/Cypress"
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .npm
+    - cache/Cypress
+    - node_modules
+
+stages:
+  - setup
+  - lint
+  - test
+  - report
+
+setup:
+  stage: setup
+  script:
+    - npm ci
+    - npm run cy:verify
+  artifacts:
+    paths:
+      - node_modules
+
+lint:
+  stage: lint
+  script:
+    - npm run lint
+  dependencies:
+    - setup
+
+.test_template: &test_definition
+  artifacts:
+    when: always
+    paths:
+      - cypress/reports
+      - cypress/screenshots
+      - cypress/videos
+    expire_in: 1 week
+  dependencies:
+    - setup
+
+test:chrome:
+  <<: *test_definition
+  stage: test
+  parallel: 3
+  script:
+    - npm run cy:run-chrome
+
+test:firefox:
+  <<: *test_definition
+  stage: test
+  parallel: 3
+  script:
+    - npm run cy:run-firefox
+
+generate-reports:
+  stage: report
+  script:
+    - npm run combine-reports
+    - npm run generate-report
+  artifacts:
+    paths:
+      - cypress/reports
+  dependencies:
+    - test:chrome
+    - test:firefox
+
+pages:
+  stage: report
+  script:
+    - mkdir -p public
+    - cp -r cypress/reports/html/* public/
+  artifacts:
+    paths:
+      - public
+  only:
+    - main
+  dependencies:
+    - generate-reports

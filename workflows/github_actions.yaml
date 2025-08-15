@@ -1,0 +1,240 @@
+name: Cypress Tests
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 10,14 * * 1-5' # Executa às 10h e 14h em dias úteis
+  workflow_dispatch:
+    inputs:
+      browser:
+        description: 'Browser para executar os testes'
+        required: true
+        default: 'chrome'
+        type: choice
+        options:
+          - chrome
+          - firefox
+          - electron
+      spec:
+        description: 'Caminho do spec para executar'
+        required: false
+        type: string
+      environment:
+        description: 'Ambiente de execução'
+        required: true
+        default: 'prod'
+        type: choice
+        options:
+          - prod
+          - staging
+          - dev
+
+jobs:
+  install:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+
+      - name: Cache Cypress binary
+        uses: actions/cache@v3
+        id: cache-cypress
+        with:
+          path: ~/.cache/Cypress
+          key: cypress-binary-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            cypress-binary-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify Cypress
+        run: npx cypress verify
+
+      - name: Cache workspace
+        uses: actions/cache@v3
+        with:
+          path: |
+            node_modules
+            ~/.cache/Cypress
+          key: workspace-${{ github.sha }}
+
+  lint:
+    needs: install
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore workspace
+        uses: actions/cache@v3
+        with:
+          path: |
+            node_modules
+            ~/.cache/Cypress
+          key: workspace-${{ github.sha }}
+
+      - name: Run ESLint
+        run: npm run lint
+
+  ui-chrome-tests:
+    needs: lint
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        containers: [1, 2, 3] # Executa em paralelo em 3 containers
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore workspace
+        uses: actions/cache@v3
+        with:
+          path: |
+            node_modules
+            ~/.cache/Cypress
+          key: workspace-${{ github.sha }}
+
+      - name: Run Cypress tests
+        uses: cypress-io/github-action@v6
+        with:
+          browser: ${{ github.event.inputs.browser || 'chrome' }}
+          spec: ${{ github.event.inputs.spec || 'cypress/e2e/**/*.cy.{js,jsx,ts,tsx}' }}
+          record: true
+          parallel: true
+          group: 'UI - Chrome'
+          tag: ${{ github.event.inputs.environment || 'prod' }}
+        env:
+          CYPRESS_ENVIRONMENT: ${{ github.event.inputs.environment || 'prod' }}
+          CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEBUG: cypress:server:args
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: cypress-screenshots-${{ matrix.containers }}
+          path: cypress/screenshots
+          if-no-files-found: ignore
+
+      - name: Upload videos
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: cypress-videos-${{ matrix.containers }}
+          path: cypress/videos
+          if-no-files-found: ignore
+
+  ui-firefox-tests:
+    needs: lint
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        containers: [1, 2, 3]
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore workspace
+        uses: actions/cache@v3
+        with:
+          path: |
+            node_modules
+            ~/.cache/Cypress
+          key: workspace-${{ github.sha }}
+
+      - name: Run Cypress tests
+        uses: cypress-io/github-action@v6
+        with:
+          browser: firefox
+          spec: ${{ github.event.inputs.spec || 'cypress/e2e/**/*.cy.{js,jsx,ts,tsx}' }}
+          record: true
+          parallel: true
+          group: 'UI - Firefox'
+          tag: ${{ github.event.inputs.environment || 'prod' }}
+        env:
+          CYPRESS_ENVIRONMENT: ${{ github.event.inputs.environment || 'prod' }}
+          CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEBUG: cypress:server:args
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: cypress-screenshots-firefox-${{ matrix.containers }}
+          path: cypress/screenshots
+          if-no-files-found: ignore
+
+      - name: Upload videos
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: cypress-videos-firefox-${{ matrix.containers }}
+          path: cypress/videos
+          if-no-files-found: ignore
+
+  generate-report:
+    needs: [ui-chrome-tests, ui-firefox-tests]
+    if: always()
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: cypress-results
+
+      - name: Generate combined report
+        run: |
+          npm ci
+          npm run combine-reports || true
+          npm run generate-report || true
+
+      - name: Deploy report to GitHub Pages
+        if: success()
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: cypress/reports
+          destination_dir: reports/${{ github.run_number }}
+
+      - name: Upload combined report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: cypress-report
+          path: cypress/reports
+          if-no-files-found: ignore
+
+  notify:
+    needs: generate-report
+    if: always()
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "Tests completed successfully!"
+          # Aqui você pode adicionar notificações para Slack, Teams, etc.
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Tests failed!"
+          # Aqui você pode adicionar notificações para Slack, Teams, etc.

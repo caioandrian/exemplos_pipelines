@@ -1,0 +1,182 @@
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - 'cypress/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'azure-pipelines.yml'
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+parameters:
+  - name: environment
+    displayName: 'Ambiente de Execução'
+    type: string
+    default: 'prod'
+    values:
+      - prod
+      - staging
+      - dev
+  - name: browser
+    displayName: 'Browser para Testes'
+    type: string
+    default: 'chrome'
+    values:
+      - chrome
+      - firefox
+      - electron
+
+variables:
+  npm_config_cache: $(Pipeline.Workspace)/.npm
+  CYPRESS_CACHE_FOLDER: $(Pipeline.Workspace)/cypress
+  CYPRESS_ENVIRONMENT: ${{ parameters.environment }}
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  - stage: Setup
+    jobs:
+      - job: Install
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '18.x'
+            displayName: 'Instalar Node.js'
+
+          - task: Cache@2
+            inputs:
+              key: 'npm | "$(Agent.OS)" | package-lock.json'
+              path: $(npm_config_cache)
+            displayName: 'Cache npm'
+
+          - task: Cache@2
+            inputs:
+              key: 'cypress | "$(Agent.OS)" | package-lock.json'
+              path: $(CYPRESS_CACHE_FOLDER)
+            displayName: 'Cache Cypress'
+
+          - script: npm ci
+            displayName: 'Instalar Dependências'
+
+          - script: npx cypress verify
+            displayName: 'Verificar Instalação Cypress'
+
+  - stage: Lint
+    dependsOn: Setup
+    jobs:
+      - job: ESLint
+        steps:
+          - script: |
+              npm ci
+              npm run lint
+            displayName: 'Executar ESLint'
+
+  - stage: Test
+    dependsOn: Lint
+    jobs:
+      - job: ChromeTests
+        strategy:
+          parallel: 3
+        steps:
+          - script: |
+              npm ci
+              npx cypress run \
+                --browser ${{ parameters.browser }} \
+                --record \
+                --parallel \
+                --group "UI - ${{ parameters.browser }}" \
+                --tag ${{ parameters.environment }} \
+                --ci-build-id $(Build.BuildId)
+            displayName: 'Executar Testes Cypress'
+            env:
+              CYPRESS_RECORD_KEY: $(CYPRESS_RECORD_KEY)
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '**/junit-*.xml'
+              mergeTestResults: true
+              testRunTitle: 'Testes Cypress - ${{ parameters.browser }}'
+            condition: succeededOrFailed()
+            displayName: 'Publicar Resultados JUnit'
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: 'cypress/screenshots'
+              artifact: 'screenshots-${{ parameters.browser }}'
+              publishLocation: 'pipeline'
+            condition: failed()
+            displayName: 'Publicar Screenshots'
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: 'cypress/videos'
+              artifact: 'videos-${{ parameters.browser }}'
+              publishLocation: 'pipeline'
+            condition: succeededOrFailed()
+            displayName: 'Publicar Vídeos'
+
+  - stage: Report
+    dependsOn: Test
+    condition: always()
+    jobs:
+      - job: GenerateReport
+        steps:
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              buildType: 'current'
+              targetPath: '$(Pipeline.Workspace)/artifacts'
+            displayName: 'Download Artefatos'
+
+          - script: |
+              npm ci
+              npm run combine-reports || true
+              npm run generate-report || true
+            displayName: 'Gerar Relatório Combinado'
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: 'cypress/reports'
+              artifact: 'cypress-report'
+              publishLocation: 'pipeline'
+            displayName: 'Publicar Relatório'
+
+          - task: AzureStaticWebApp@0
+            inputs:
+              app_location: 'cypress/reports'
+              output_location: ''
+              skip_app_build: true
+              azure_static_web_apps_api_token: $(STATIC_WEB_APP_TOKEN)
+            displayName: 'Publicar Relatório no Static Web App'
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+  - stage: Notify
+    dependsOn: Report
+    condition: always()
+    jobs:
+      - job: SendNotification
+        steps:
+          - task: PowerShell@2
+            inputs:
+              targetType: 'inline'
+              script: |
+                $status = "$(Agent.JobStatus)"
+                $message = if ($status -eq "Succeeded") {
+                  "Pipeline concluído com sucesso!"
+                } else {
+                  "Pipeline falhou! Verifique os logs."
+                }
+                Write-Host "##vso[task.setvariable variable=NotificationMessage]$message"
+            displayName: 'Preparar Mensagem'
+
+          # Aqui você pode adicionar tasks para enviar notificações
+          # para Slack, Teams, Email, etc.

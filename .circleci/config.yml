@@ -1,0 +1,89 @@
+version: 2.1
+
+orbs:
+  cypress: cypress-io/cypress@3
+  node: circleci/node@5
+
+executors:
+  cypress-executor:
+    docker:
+      - image: cypress/base:latest
+    resource_class: large
+
+commands:
+  save-test-results:
+    steps:
+      - store_test_results:
+          path: cypress/reports
+      - store_artifacts:
+          path: cypress/reports
+      - store_artifacts:
+          path: cypress/screenshots
+      - store_artifacts:
+          path: cypress/videos
+
+jobs:
+  setup:
+    executor: cypress-executor
+    steps:
+      - checkout
+      - node/install:
+          node-version: '18.x'
+      - node/install-packages:
+          pkg-manager: npm
+          cache-path: ~/.npm
+          override-ci-command: npm ci
+      - persist_to_workspace:
+          root: .
+          paths:
+            - node_modules
+            - package.json
+            - package-lock.json
+            - cypress.config.js
+
+  lint:
+    executor: cypress-executor
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run:
+          name: Lint
+          command: npm run lint
+
+  test-chrome:
+    executor: cypress-executor
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run:
+          name: Run Chrome Tests
+          command: npm run cy:run-exemplo -- --browser chrome
+      - save-test-results
+
+  test-firefox:
+    executor: cypress-executor
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run:
+          name: Run Firefox Tests
+          command: npm run cy:run-exemplo -- --browser firefox
+      - save-test-results
+
+workflows:
+  version: 2
+  build-test:
+    jobs:
+      - setup
+      - lint:
+          requires:
+            - setup
+      - test-chrome:
+          requires:
+            - lint
+      - test-firefox:
+          requires:
+            - lint

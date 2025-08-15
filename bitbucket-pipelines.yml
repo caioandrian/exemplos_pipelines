@@ -1,0 +1,96 @@
+image: cypress/base:latest
+
+definitions:
+  caches:
+    npm: ~/.npm
+    cypress: ~/.cache/Cypress
+  
+  steps:
+    - step: &setup
+        name: Setup
+        caches:
+          - npm
+          - cypress
+        script:
+          - npm ci
+          - npm run cy:verify
+        artifacts:
+          - node_modules/**
+    
+    - step: &lint
+        name: Lint
+        script:
+          - npm run lint
+    
+    - step: &test
+        name: Test
+        caches:
+          - npm
+          - cypress
+        artifacts:
+          paths:
+            - cypress/reports/**
+            - cypress/screenshots/**
+            - cypress/videos/**
+          reports:
+            junit:
+              - cypress/reports/*.xml
+
+pipelines:
+  default:
+    - step: *setup
+    - step: *lint
+    - parallel:
+        - step:
+            name: Chrome Tests
+            <<: *test
+            script:
+              - npm run cy:run-chrome
+        - step:
+            name: Firefox Tests
+            <<: *test
+            script:
+              - npm run cy:run-firefox
+    - step:
+        name: Generate Reports
+        script:
+          - npm run combine-reports
+          - npm run generate-report
+        artifacts:
+          paths:
+            - cypress/reports/**
+
+  branches:
+    main:
+      - step: *setup
+      - step: *lint
+      - parallel:
+          - step:
+              name: Chrome Tests
+              <<: *test
+              script:
+                - npm run cy:run-chrome
+          - step:
+              name: Firefox Tests
+              <<: *test
+              script:
+                - npm run cy:run-firefox
+      - step:
+          name: Generate Reports
+          script:
+            - npm run combine-reports
+            - npm run generate-report
+          artifacts:
+            paths:
+              - cypress/reports/**
+      - step:
+          name: Deploy Reports
+          script:
+            - pipe: atlassian/aws-s3-deploy:1.1.0
+              variables:
+                AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+                AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+                AWS_DEFAULT_REGION: $AWS_DEFAULT_REGION
+                S3_BUCKET: $S3_BUCKET
+                LOCAL_PATH: 'cypress/reports/html'
+                ACL: 'public-read'
