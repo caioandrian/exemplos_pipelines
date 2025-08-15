@@ -116,10 +116,65 @@ Pipeline robusto com:
 
 ## Requisitos
 
-- Node.js 18.x
+- Node.js >= 18.0.0
 - npm ou yarn
-- Cypress
+- Cypress 14.4.1
 - Acesso à plataforma de CI/CD escolhida
+
+### Notas de Compatibilidade
+
+Este projeto utiliza Cypress 14.4.1, que requer:
+- Node.js 18.0.0 ou superior
+- Suporte a módulos ES
+- Navegadores compatíveis:
+  - Chrome/Chromium 102+
+  - Firefox 91+
+  - Edge 102+
+  - Electron 21.0.0+
+
+## Exemplo de Teste
+
+O projeto inclui um exemplo básico de teste Cypress que demonstra algumas funcionalidades comuns:
+
+### Estrutura do Teste
+
+```
+cypress/
+├── e2e/
+│   └── exemplo/
+│       └── exemplo.cy.js    # Arquivo de teste de exemplo
+├── support/
+│   └── e2e.js              # Comandos e configurações personalizadas
+└── reports/                 # Relatórios gerados (screenshots, vídeos, etc.)
+```
+
+### Funcionalidades Demonstradas
+
+O teste de exemplo (`exemplo.cy.js`) demonstra:
+- Navegação básica
+- Interação com elementos
+- Assertions comuns
+- Verificação de URL e título
+- Uso de comandos personalizados
+
+### Executando os Testes
+
+1. Localmente:
+   ```bash
+   # Abre o Cypress Test Runner
+   npm run cy:open
+
+   # Executa os testes em modo headless no Chrome
+   npm run cy:run-chrome
+
+   # Executa os testes em modo headless no Firefox
+   npm run cy:run-firefox
+   ```
+
+2. Via Pipeline:
+   - Os testes serão executados automaticamente quando o pipeline for acionado
+   - Cada plataforma de CI/CD tem seu próprio trigger (push, PR, manual, etc.)
+   - Os relatórios serão gerados e armazenados conforme configuração de cada pipeline
 
 ## Variáveis de Ambiente
 
