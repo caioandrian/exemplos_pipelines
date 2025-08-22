@@ -201,8 +201,12 @@ jobs:
           path: cypress-results
 
       - name: Generate combined report
+        uses: cypress-io/github-action@v6
+        with:
+          install: true
+          runTests: false
+      - name: Generate reports
         run: |
-          npm ci
           npm run combine-reports || true
           npm run generate-report || true
 
